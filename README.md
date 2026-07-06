@@ -124,61 +124,186 @@ hora CDMX, lunes a viernes). Ponlo en `false` si quieres que revise siempre.
 Con esto el bot arranca solo al prender la máquina y sigue corriendo en
 segundo plano (usa `pythonw.exe`, no abre ventana de consola).
 
-**Servidor Linux — `systemd` (recomendado si el bot corre en una VPS/servidor Linux):**
+**Servidor Linux (Ubuntu Server):** ver la guía completa más abajo,
+[Despliegue en Ubuntu Server](#despliegue-en-ubuntu-server).
 
-1. Crea un usuario sin privilegios dedicado al bot (nunca lo corras como root):
+## Despliegue en Ubuntu Server
 
-   ```bash
-   sudo useradd --system --create-home --shell /usr/sbin/nologin tradingbot
-   sudo cp -r trading-bot /opt/trading-bot
-   sudo chown -R tradingbot:tradingbot /opt/trading-bot
-   sudo chmod 600 /opt/trading-bot/.env
-   ```
+Guía de punta a punta para pasar de "el bot corre en mi laptop Windows" a
+"el bot corre 24/7 en un servidor Ubuntu", con un usuario sin privilegios y
+reinicio automático si crashea. Se usa `/opt/trading-bot` como ruta; cambia
+según prefieras.
 
-2. Crea `/etc/systemd/system/trading-bot.service`:
+### 1. Prerrequisitos en el servidor
 
-   ```ini
-   [Unit]
-   Description=Bot de monitoreo de mercado
-   After=network-online.target
-   Wants=network-online.target
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y python3 python3-venv python3-pip tzdata
+python3 --version   # debe ser 3.9 o superior (el bot usa zoneinfo, de la stdlib desde 3.9)
+```
 
-   [Service]
-   Type=simple
-   User=tradingbot
-   Group=tradingbot
-   WorkingDirectory=/opt/trading-bot
-   ExecStart=/opt/trading-bot/venv/bin/python -m src.main
-   Restart=on-failure
-   RestartSec=10
+Si tu Ubuntu es 20.04 (Python 3.8), instala Python 3.9+ vía el PPA
+`deadsnakes` o actualiza a Ubuntu 22.04/24.04 LTS antes de continuar.
 
-   # --- Hardening: reduce lo que el proceso puede hacer si se ve comprometido ---
-   NoNewPrivileges=true
-   PrivateTmp=true
-   ProtectSystem=strict
-   ProtectHome=true
-   ReadWritePaths=/opt/trading-bot/data
-   ProtectKernelTunables=true
-   ProtectKernelModules=true
-   ProtectControlGroups=true
-   RestrictSUIDSGID=true
-   MemoryDenyWriteExecute=true
+### 2. Subir el código al servidor
 
-   [Install]
-   WantedBy=multi-user.target
-   ```
+El proyecto vive hoy en tu máquina Windows, no en un repo git. La forma más
+simple es empaquetarlo (excluyendo `venv/` y `data/`, que son específicos de
+cada máquina — el `venv` de Windows **no funciona en Linux**, hay que
+recrearlo ahí) y copiarlo por `scp`:
 
-3. Actívalo:
+```powershell
+# En PowerShell, desde C:\trading-bot
+tar --exclude="venv" --exclude="data" --exclude="__pycache__" --exclude=".pytest_cache" -czf trading-bot.tar.gz .
+scp trading-bot.tar.gz usuario@IP_DEL_SERVIDOR:/tmp/
+```
 
-   ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now trading-bot
-   sudo systemctl status trading-bot
-   journalctl -u trading-bot -f   # ver logs en vivo
-   ```
+```bash
+# En el servidor
+sudo mkdir -p /opt/trading-bot
+sudo tar -xzf /tmp/trading-bot.tar.gz -C /opt/trading-bot
+rm /tmp/trading-bot.tar.gz
+```
+
+Si más adelante quieres actualizar el código, repite estos dos pasos (o,
+mejor aún, sube el proyecto a un repo git privado y usa `git pull` — más
+cómodo para actualizaciones frecuentes).
+
+### 3. Crear el entorno virtual e instalar dependencias (en el servidor)
+
+```bash
+cd /opt/trading-bot
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+deactivate
+```
+
+### 4. Configurar `.env` y `config.yaml`
+
+```bash
+cp /opt/trading-bot/.env.example /opt/trading-bot/.env
+nano /opt/trading-bot/.env      # pega tu TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID
+chmod 600 /opt/trading-bot/.env
+```
+
+Tu `config.yaml` (watchlist, umbrales, intervalos) ya viaja tal cual dentro
+del `.tar.gz`, así que normalmente no necesitas volver a escribirlo — solo
+revísalo con `nano /opt/trading-bot/config.yaml` por si quieres ajustar algo
+específico del servidor (por ejemplo, intervalos más largos si el servidor
+tiene recursos limitados).
+
+### 5. Probar antes de dejarlo como servicio
+
+```bash
+cd /opt/trading-bot
+source venv/bin/activate
+python scripts/check_quotes.py TTWO
+python scripts/check_telegram.py
+pip install pytest && pytest
+deactivate
+```
+
+### 6. Usuario dedicado sin privilegios
+
+Nunca corras el bot como `root`. Crea un usuario de sistema exclusivo y
+transfiérele la propiedad de la carpeta:
+
+```bash
+sudo useradd --system --home /opt/trading-bot --shell /usr/sbin/nologin tradingbot
+sudo mkdir -p /opt/trading-bot/data   # el .tar.gz no la incluye; systemd la necesita creada de antemano
+sudo chown -R tradingbot:tradingbot /opt/trading-bot
+```
+
+### 7. Servicio `systemd` (arranque automático + reinicio ante fallos)
+
+Crea `/etc/systemd/system/trading-bot.service`:
+
+```ini
+[Unit]
+Description=Bot de monitoreo de mercado
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tradingbot
+Group=tradingbot
+WorkingDirectory=/opt/trading-bot
+ExecStart=/opt/trading-bot/venv/bin/python -m src.main
+Restart=on-failure
+RestartSec=10
+
+# --- Hardening: reduce lo que el proceso puede hacer si se ve comprometido ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/trading-bot/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Actívalo:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now trading-bot
+sudo systemctl status trading-bot
+journalctl -u trading-bot -f   # ver logs en vivo (Ctrl+C para salir)
+```
 
 `Restart=on-failure` hace que systemd reinicie el bot solo si crashea, algo
-que no ofrece el script por sí mismo.
+que el script no hace por sí mismo.
+
+### 8. Firewall (`ufw`)
+
+El bot no necesita ningún puerto de entrada (solo hace peticiones salientes
+a Yahoo Finance y Telegram), así que puedes cerrar todo el tráfico entrante
+por defecto. **Cuidado:** si administras el servidor por SSH, debes permitir
+el puerto 22 explícitamente *antes* de activar `ufw`, o perderás el acceso:
+
+```bash
+sudo ufw allow OpenSSH          # o: sudo ufw allow 22/tcp
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw enable
+sudo ufw status verbose
+```
+
+### 9. Mantenimiento
+
+```bash
+sudo systemctl restart trading-bot   # reiniciar tras un cambio de config
+sudo systemctl stop trading-bot      # detener
+journalctl -u trading-bot -n 100     # últimas 100 líneas de log
+tail -f /opt/trading-bot/data/bot.log  # log rotado de la app
+
+# Actualizar dependencias:
+cd /opt/trading-bot && source venv/bin/activate
+pip list --outdated
+pip install --upgrade -r requirements.txt
+deactivate
+sudo systemctl restart trading-bot
+
+# Desinstalar por completo:
+sudo systemctl disable --now trading-bot
+sudo rm /etc/systemd/system/trading-bot.service
+sudo systemctl daemon-reload
+sudo userdel tradingbot
+```
+
+Considera además activar `unattended-upgrades` (`sudo apt install -y
+unattended-upgrades && sudo dpkg-reconfigure --priority=low
+unattended-upgrades`) para que el sistema operativo reciba parches de
+seguridad automáticamente.
 
 ## Seguridad (importante si el bot corre en un servidor)
 
@@ -204,10 +329,12 @@ El proyecto ya incluye estas protecciones, pero conviene entender qué hacen:
 Recomendaciones adicionales para un servidor de producción:
 
 - **No correr el bot como root/Administrador.** Usa un usuario dedicado sin
-  privilegios (ver el ejemplo de `systemd` arriba).
-- **Restringe el firewall de salida** si tu servidor lo permite, a solo
-  `api.telegram.org` y los dominios de Yahoo Finance (`*.yahoo.com`,
-  `*.yahooapis.com`) — el bot no necesita nada más.
+  privilegios (ver el paso 6 de la guía de Ubuntu arriba).
+- **Cierra el tráfico entrante con `ufw`** (paso 8 de la guía): el bot no
+  necesita ningún puerto abierto, solo SSH para administración. Restringir
+  la salida por dominio (`api.telegram.org`, Yahoo Finance) no es práctico
+  con `ufw` porque resuelve el hostname a una IP fija al crear la regla, y
+  esas IPs cambian (son CDN); no vale la pena el riesgo de reglas rotas.
 - **Revoca y regenera el token con @BotFather (`/revoke`)** si sospechas que
   se filtró (por ejemplo, si `.env` se subió a un repo por error).
 - **Mantén dependencias actualizadas**: `pip list --outdated` y de vez en
