@@ -1,0 +1,47 @@
+# ============================================================================
+# Configuración del bot de monitoreo de mercado
+# ============================================================================
+
+# Intervalo por defecto para las acciones que no especifiquen el suyo propio.
+# Formatos válidos: "30s", "5m", "30m", "1h", "1d"
+default_interval: 5m
+
+# Si es true, el bot solo revisa/alerta mientras el mercado correspondiente
+# está abierto (NYSE/NASDAQ en horario US, BMV en horario MX). Si es false,
+# revisa siempre usando el último precio disponible.
+market_hours_only: true
+
+# Si es true, además de las alertas por regla, se manda un mensaje con el
+# precio actual en cada revisión (puede ser mucho tráfico en Telegram si
+# el intervalo es corto).
+periodic_report: false
+
+# Lista de acciones a vigilar.
+# - ticker: tal como lo reconoce Yahoo Finance.
+#     * Acciones de EE.UU.: tal cual aparecen en GBM, ej. TTWO, AAPL, MSFT.
+#     * Acciones de la BMV (México): agregar sufijo ".MX", ej. AMXL.MX,
+#       GFNORTEO.MX, WALMEX.MX, AMXB.MX (América Móvil). Verifica el ticker
+#       exacto en https://finance.yahoo.com/ antes de usarlo, porque a veces
+#       no coincide con el nombre corto usado en GBM (ej. América Móvil es
+#       AMXB.MX en Yahoo, no AMXL.MX).
+# - market: "US" o "MX" (solo se usa para calcular horario de mercado).
+# - interval: opcional, sobreescribe default_interval para esta acción.
+# - rules: lista de condiciones de alerta.
+#     * price_above: alerta cuando el precio sube por encima de "value".
+#     * price_below: alerta cuando el precio baja por debajo de "value".
+#     * pct_change:  alerta cuando el % de cambio respecto al cierre
+#                    anterior supera ±"value" (en puntos porcentuales).
+watchlist:
+  - ticker: TTWO
+    market: US
+    interval: 5m
+    rules:
+      - { type: price_above, value: 260 }
+      - { type: price_below, value: 230 }
+      - { type: pct_change, value: 3 }
+
+  # - ticker: AMXB.MX
+  #   market: MX
+  #   interval: 30m
+  #   rules:
+  #     - { type: pct_change, value: 2 }
