@@ -17,6 +17,9 @@ market_hours_only: true
 periodic_report: false
 
 # Lista de acciones a vigilar.
+# NOTA: además de editar esta lista, puedes agregar/quitar acciones sin
+# reiniciar el bot mandándole comandos por Telegram (/add_action, /remove_action,
+# /list_actions, /status, /help). Ver el README, sección "Comandos de Telegram".
 # - ticker: tal como lo reconoce Yahoo Finance.
 #     * Acciones de EE.UU.: tal cual aparecen en GBM, ej. TTWO, AAPL, MSFT.
 #     * Acciones de la BMV (México): agregar sufijo ".MX", ej. AMXL.MX,

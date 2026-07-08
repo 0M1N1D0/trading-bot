@@ -61,6 +61,44 @@ def check_item(
         notifier.send(report)
 
 
+def add_watch_job(
+    scheduler: BackgroundScheduler,
+    item: WatchItem,
+    config: AppConfig,
+    notifier: Notifier,
+    state: StateStore,
+) -> None:
+    """Programa (o reemplaza) el job de revisión periódica de `item`.
+
+    Se usa tanto al arrancar (una vez por acción de la watchlist) como en
+    caliente, cuando se agrega una acción nueva vía Telegram
+    (src/telegram_bot.py) sin reiniciar el bot.
+    """
+    seconds = parse_interval_seconds(item.interval)
+    scheduler.add_job(
+        check_item,
+        "interval",
+        seconds=seconds,
+        args=[item, config, notifier, state],
+        id=f"check_{item.ticker}",
+        coalesce=True,
+        max_instances=1,
+        replace_existing=True,
+    )
+    logger.info("Job programado: %s cada %ds (%s)", item.ticker, seconds, item.interval)
+
+
+def remove_watch_job(scheduler: BackgroundScheduler, ticker: str) -> bool:
+    """Quita el job de revisión de `ticker`, si existe. Devuelve True si lo
+    quitó, False si no había ningún job programado para ese ticker."""
+    job_id = f"check_{ticker}"
+    if scheduler.get_job(job_id) is None:
+        return False
+    scheduler.remove_job(job_id)
+    logger.info("Job removido: %s", ticker)
+    return True
+
+
 def build_scheduler(
     config: AppConfig,
     notifier: Notifier,
@@ -69,15 +107,5 @@ def build_scheduler(
     """Crea (sin arrancar) un BackgroundScheduler con un job por acción."""
     scheduler = BackgroundScheduler()
     for item in config.watchlist:
-        seconds = parse_interval_seconds(item.interval)
-        scheduler.add_job(
-            check_item,
-            "interval",
-            seconds=seconds,
-            args=[item, config, notifier, state],
-            id=f"check_{item.ticker}",
-            coalesce=True,
-            max_instances=1,
-        )
-        logger.info("Job programado: %s cada %ds (%s)", item.ticker, seconds, item.interval)
+        add_watch_job(scheduler, item, config, notifier, state)
     return scheduler

@@ -78,6 +78,24 @@ pip install -r requirements.txt
    Cada acción manda además un reporte periódico con su precio si
    `periodic_report: true` (a nivel global).
 
+### Comandos de Telegram (gestionar la watchlist sin reiniciar)
+
+Además de `config.yaml`, el bot escucha comandos en el chat configurado
+(`TELEGRAM_CHAT_ID`) para agregar o quitar acciones **en caliente**, sin
+reiniciar el proceso. Cualquier otro chat que le escriba es ignorado.
+
+| Comando | Ejemplo | Qué hace |
+|---|---|---|
+| `/add_action` (alias `/add`) | `/add_action TTWO price_above=260 pct_change=3` | Agrega un ticker a la watchlist. Solo el ticker es obligatorio; el resto son argumentos opcionales `clave=valor`: `market=US\|MX`, `interval=15m`, `price_above=N`, `price_below=N`, `pct_change=N`. Sin reglas, la acción queda en monitoreo simple (sin alertas) hasta que se le agreguen. |
+| `/remove_action` (alias `/remove`) | `/remove_action TTWO` | Quita un ticker de la watchlist. Si el ticker viene de `config.yaml`, se quita solo de la sesión actual y reaparecerá al reiniciar (edita `config.yaml` para quitarlo de forma permanente). |
+| `/list_actions` (alias `/list`) | `/list_actions` | Muestra la watchlist completa (config.yaml + agregadas por Telegram) con su intervalo y reglas. |
+| `/status` | `/status AAPL` | Precio actual de un ticker (o de toda la watchlist si no se indica ninguno). |
+| `/help` (alias `/start`) | `/help` | Lista los comandos disponibles. |
+
+El mercado (`US`/`MX`) se infiere del ticker: sufijo `.MX` → `MX`, si no →
+`US` (mismo criterio que `config.yaml`). Las acciones agregadas por
+Telegram se guardan en `data/state.db` y sobreviven a un reinicio del bot.
+
 ## 4. Probar antes de dejarlo corriendo
 
 ```powershell
@@ -349,15 +367,18 @@ trading-bot/
 ├── config.yaml         # qué vigilar, intervalos, umbrales
 ├── .env                # TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (no se sube a git)
 ├── src/
-│   ├── main.py          # arranca el bot
-│   ├── config.py        # carga config.yaml + .env
-│   ├── models.py        # tipos: WatchItem, Quote, AlertRule...
-│   ├── provider.py       # obtiene precios (yfinance)
-│   ├── rules.py          # evalúa umbrales y % de cambio
-│   ├── notifier.py       # manda mensajes a Telegram
-│   ├── market_hours.py   # ¿mercado abierto?
-│   ├── state.py          # evita repetir la misma alerta (SQLite)
-│   └── scheduler.py      # un job por acción con su propio intervalo
+│   ├── main.py             # arranca el bot
+│   ├── config.py           # carga config.yaml + .env
+│   ├── models.py           # tipos: WatchItem, Quote, AlertRule...
+│   ├── provider.py         # obtiene precios (yfinance)
+│   ├── rules.py            # evalúa umbrales y % de cambio
+│   ├── notifier.py         # manda mensajes a Telegram (saliente)
+│   ├── telegram_bot.py     # recibe comandos de Telegram (/add_action...)
+│   ├── commands.py         # parseo/formato de los comandos (puro, testeable)
+│   ├── market_hours.py     # ¿mercado abierto?
+│   ├── state.py            # evita repetir la misma alerta (SQLite)
+│   ├── watchlist_store.py  # persiste acciones agregadas por Telegram (SQLite)
+│   └── scheduler.py        # un job por acción con su propio intervalo
 ├── scripts/
 │   ├── check_quotes.py   # prueba manual de datos de mercado
 │   └── check_telegram.py # prueba manual de envío a Telegram

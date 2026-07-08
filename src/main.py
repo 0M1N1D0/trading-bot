@@ -1,12 +1,10 @@
-"""Punto de entrada del bot: carga configuración, arranca el scheduler y
-se mantiene vivo hasta Ctrl+C."""
+"""Punto de entrada del bot: carga configuración, arranca el scheduler y el
+bot de Telegram (comandos entrantes), y se mantiene vivo hasta Ctrl+C."""
 
 from __future__ import annotations
 
 import logging
-import signal
 import sys
-import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -16,8 +14,10 @@ if str(BASE_DIR) not in sys.path:
 
 from src.config import ConfigError, load_config  # noqa: E402
 from src.notifier import Notifier  # noqa: E402
-from src.scheduler import build_scheduler  # noqa: E402
+from src.scheduler import add_watch_job, build_scheduler  # noqa: E402
 from src.state import StateStore  # noqa: E402
+from src.telegram_bot import build_application  # noqa: E402
+from src.watchlist_store import WatchlistStore, merge_watchlist  # noqa: E402
 
 LOG_DIR = BASE_DIR / "data"
 LOG_FILE = LOG_DIR / "bot.log"
@@ -65,29 +65,33 @@ def main() -> int:
 
     notifier = Notifier(config.telegram)
     state = StateStore()
+    watchlist_store = WatchlistStore()
     scheduler = build_scheduler(config, notifier, state)
 
-    tickers = ", ".join(item.ticker for item in config.watchlist)
+    # Acciones agregadas por Telegram en sesiones anteriores: se reprograman
+    # aquí para que sobrevivan a un reinicio del bot. config.yaml manda si un
+    # mismo ticker aparece en ambos lados (ver merge_watchlist).
+    live_items = merge_watchlist(config.watchlist, watchlist_store)
+    for item in live_items:
+        if item.ticker not in {w.ticker for w in config.watchlist}:
+            add_watch_job(scheduler, item, config, notifier, state)
+
+    tickers = ", ".join(item.ticker for item in live_items)
     logger.info("Bot iniciado. Vigilando: %s", tickers)
     notifier.send(f"🤖 Bot de mercado iniciado. Vigilando: {tickers}")
 
     scheduler.start()
 
-    stop = {"flag": False}
-
-    def _handle_signal(signum, frame):  # noqa: ANN001
-        logger.info("Señal %s recibida, apagando...", signum)
-        stop["flag"] = True
-
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
+    application = build_application(config, scheduler, notifier, state, watchlist_store)
 
     try:
-        while not stop["flag"]:
-            time.sleep(1)
+        # Bloquea aquí hasta Ctrl+C / SIGTERM: run_polling maneja sus propios
+        # señales y su propio loop de asyncio para recibir comandos.
+        application.run_polling(close_loop=False)
     finally:
         scheduler.shutdown(wait=False)
         state.close()
+        watchlist_store.close()
         logger.info("Bot detenido.")
 
     return 0
