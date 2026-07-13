@@ -18,8 +18,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
 
-from src import provider
-from src.commands import format_quote, format_watchlist, parse_add_args
+from src import analysis, provider
+from src.commands import format_analysis, format_quote, format_watchlist, parse_add_args
 from src.config import AppConfig
 from src.models import WatchItem
 from src.notifier import Notifier
@@ -37,11 +37,13 @@ _HELP_TEXT = (
     "/remove\\_action TICKER — quita una acción de la watchlist\n"
     "/list\\_actions — muestra la watchlist actual\n"
     "/status \\[TICKER\\] — precio actual (de una acción o de todas)\n"
+    "/analisis TICKER — análisis técnico (tendencia, recomendación, confianza)\n"
     "/help — este mensaje\n\n"
     "*Ejemplos:*\n"
     "`/add_action AAPL`\n"
     "`/add_action TTWO price_above=260 pct_change=3`\n"
-    "`/add_action AMXB.MX interval=30m pct_change=2`"
+    "`/add_action AMXB.MX interval=30m pct_change=2`\n"
+    "`/analisis TTWO`"
 )
 
 _CTX_KEY = "bot_ctx"
@@ -176,6 +178,34 @@ async def _status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
+async def _analysis(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None:
+        return
+
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("Uso: /analisis TICKER")
+        return
+    ticker = args[0].strip().upper()
+
+    results = []
+    errors = []
+    for timeframe, params in analysis.TIMEFRAME_PARAMS.items():
+        try:
+            # get_history es I/O bloqueante (yfinance); igual que get_quote en
+            # /status, se corre en un hilo aparte para no congelar el bot.
+            closes = await asyncio.to_thread(
+                provider.get_history, ticker, params["period"], params["interval"]
+            )
+            results.append(analysis.analyze(closes, timeframe))
+        except ProviderError as exc:
+            errors.append(f"{timeframe}: {exc}")
+
+    await update.message.reply_text(
+        format_analysis(ticker, results, errors), parse_mode="Markdown"
+    )
+
+
 async def _help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message is None:
         return
@@ -205,7 +235,10 @@ def build_application(
         CommandHandler(["list_actions", "list"], _list_actions, filters=owner_only)
     )
     application.add_handler(CommandHandler("status", _status, filters=owner_only))
+    application.add_handler(
+        CommandHandler(["analisis", "analysis"], _analysis, filters=owner_only)
+    )
     application.add_handler(CommandHandler(["help", "start"], _help, filters=owner_only))
 
-    logger.info("Bot de Telegram configurado con %d comandos.", 5)
+    logger.info("Bot de Telegram configurado con %d comandos.", 6)
     return application

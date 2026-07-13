@@ -21,6 +21,7 @@ python -m src.main
 
 # Manual smoke tests (real network calls, not part of pytest)
 python scripts/check_quotes.py TTWO AMXB.MX   # confirms yfinance returns real prices
+python scripts/check_analysis.py TTWO AMXB.MX # confirms the technical-analysis pipeline end-to-end
 python scripts/check_telegram.py              # confirms TELEGRAM_BOT_TOKEN/CHAT_ID work
 
 # Tests
@@ -39,7 +40,7 @@ Config lives in `config.yaml` (watchlist, thresholds, intervals) and `.env` (`TE
 **Two independent I/O loops share the same in-process state**, wired together in `src/main.py`:
 
 1. **`APScheduler` (`src/scheduler.py`)** — one interval job per watchlist ticker (`check_{ticker}`), each running its own cadence. Each tick does: check market hours → fetch quote → evaluate rules → dedupe via state → notify (+ optional periodic report).
-2. **`python-telegram-bot` `Application` (`src/telegram_bot.py`)** — long-polls Telegram for incoming commands (`/add_action`, `/remove_action`, `/list_actions`, `/status`, `/help`) from the configured chat only. `application.run_polling()` is what actually blocks the process in `main()`.
+2. **`python-telegram-bot` `Application` (`src/telegram_bot.py`)** — long-polls Telegram for incoming commands (`/add_action`, `/remove_action`, `/list_actions`, `/status`, `/analisis`, `/help`) from the configured chat only. `application.run_polling()` is what actually blocks the process in `main()`.
 
 Both loops read/write the same `BackgroundScheduler`, `Notifier`, `StateStore`, and `WatchlistStore` instances — e.g. `/add_action` calls the same `add_watch_job()` that startup uses, so a ticker added over Telegram gets an interval job without restarting anything.
 
@@ -47,9 +48,11 @@ Both loops read/write the same `BackgroundScheduler`, `Notifier`, `StateStore`, 
 
 **Two watchlist sources merge at runtime** (`watchlist_store.merge_watchlist`): `config.yaml` is the static/primary source; tickers added via Telegram persist in `data/state.db` (table `watchlist`, separate from the alert-dedup table `active_alerts` — same SQLite file, different concern) and survive restarts. On conflict, `config.yaml` wins. `src/telegram_bot.py`'s `BotContext` keeps its own merged `live_items` dict in memory as the source of truth for what's "currently watched" during a session.
 
-**Provider isolation**: all market-data access goes through `src/provider.get_quote(ticker) -> Quote`. It's the single seam to swap data sources (e.g. off yfinance to Alpha Vantage/Finnhub) without touching scheduler/rules/telegram code — keep it that way when making provider-related changes.
+**Provider isolation**: all market-data access goes through `src/provider.get_quote(ticker) -> Quote` (current price) and `src/provider.get_history(ticker, period, interval) -> list[float]` (historical closes). It's the single seam to swap data sources (e.g. off yfinance to Alpha Vantage/Finnhub) without touching scheduler/rules/analysis/telegram code — keep it that way when making provider-related changes.
 
-**Pure vs. I/O split for testability**: `src/rules.py` and `src/commands.py` are deliberately side-effect-free (no network, no state reads) so they're covered directly by unit tests; `src/telegram_bot.py` and `src/scheduler.py` hold the async/I/O glue and call into them. Preserve this split when adding new rule types or commands — put parsing/formatting/evaluation logic in the pure modules, not inline in the handler.
+**Pure vs. I/O split for testability**: `src/rules.py`, `src/analysis.py`, and `src/commands.py` are deliberately side-effect-free (no network, no state reads) so they're covered directly by unit tests; `src/telegram_bot.py` and `src/scheduler.py` hold the async/I/O glue and call into them. Preserve this split when adding new rule types, indicators, or commands — put parsing/formatting/evaluation logic in the pure modules, not inline in the handler.
+
+**Technical analysis (`/analisis`)**: `src/analysis.analyze(closes, timeframe)` is a pure function computing SMA/MACD/momentum trend votes (net ≥+2 → `COMPRAR`, ≤−2 → `VENDER`, else `MANTENER`) plus an RSI-based confidence penalty (overbought/oversold caution, doesn't flip direction). `confidence` is intentionally capped to `[50, 85]` — it's a heuristic confluence score, not a real probability — and `commands.format_analysis` always appends a "not financial advice" disclaimer. `telegram_bot._analysis` fetches two horizons (`analysis.TIMEFRAME_PARAMS`: `"Horas"` = 60m/1mo, `"Días"` = 1d/6mo) and degrades gracefully per-horizon on `ProviderError` (e.g. missing intraday history for some `.MX` tickers) rather than failing the whole command.
 
 **Blocking I/O inside async handlers**: `telegram_bot.py` calls `provider.get_quote` (blocking, yfinance) via `asyncio.to_thread(...)` — never call it directly from an `async def` handler, it would stall the whole bot's command processing.
 

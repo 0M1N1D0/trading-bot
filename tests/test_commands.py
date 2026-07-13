@@ -1,7 +1,7 @@
 import pytest
 
-from src.commands import format_quote, format_watchlist, parse_add_args
-from src.models import AlertRule, Quote, RuleType, WatchItem
+from src.commands import format_analysis, format_quote, format_watchlist, parse_add_args
+from src.models import AlertRule, Analysis, Quote, Recommendation, RuleType, Trend, WatchItem
 
 
 def test_parse_add_args_ticker_only_uses_defaults():
@@ -81,9 +81,34 @@ def test_format_watchlist_lists_items_with_and_without_rules():
     ]
     text = format_watchlist(items)
     assert "TTWO" in text
-    assert "price_above=260" in text
+    assert "price\\_above=260" in text
     assert "AAPL" in text
     assert "sin reglas" in text
+
+
+def test_format_watchlist_escapes_underscores_in_rule_names():
+    # Con las 3 reglas (price_above, price_below, pct_change) hay un número
+    # impar de "_" en el texto sin escapar, lo que rompe el parseo de
+    # Markdown de Telegram ("Can't parse entities"). Ver commands.py.
+    items = [
+        WatchItem(
+            ticker="TTWO",
+            market="US",
+            interval="5m",
+            rules=[
+                AlertRule(RuleType.PRICE_ABOVE, 260),
+                AlertRule(RuleType.PRICE_BELOW, 230),
+                AlertRule(RuleType.PCT_CHANGE, 3),
+            ],
+        )
+    ]
+    text = format_watchlist(items)
+    # Cada tipo de regla trae exactamente un "_" (price_above, price_below,
+    # pct_change); las 3 reglas deben quedar escapadas como "\_".
+    assert text.count("\\_") == 3
+    assert "price\\_above" in text
+    assert "price\\_below" in text
+    assert "pct\\_change" in text
 
 
 def test_format_quote_includes_ticker_and_price():
@@ -94,3 +119,50 @@ def test_format_quote_includes_ticker_and_price():
     text = format_quote(item, quote)
     assert "AAPL" in text
     assert "150.00" in text
+
+
+def test_format_analysis_includes_both_timeframes_and_disclaimer():
+    analyses = [
+        Analysis(
+            timeframe="Horas",
+            trend=Trend.ALCISTA,
+            recommendation=Recommendation.COMPRAR,
+            confidence=73.3,
+            notes=["SMA5>SMA20 (alcista)", "RSI 55 (neutral)"],
+        ),
+        Analysis(
+            timeframe="Días",
+            trend=Trend.LATERAL,
+            recommendation=Recommendation.MANTENER,
+            confidence=50.0,
+            notes=["Datos insuficientes para calcular indicadores"],
+        ),
+    ]
+    text = format_analysis("TTWO", analyses)
+    assert "TTWO" in text
+    assert "Horas" in text
+    assert "Días" in text
+    assert "COMPRAR" in text
+    assert "MANTENER" in text
+    assert "73%" in text
+    assert "no es asesoría financiera" in text
+
+
+def test_format_analysis_escapes_underscores_in_notes():
+    analyses = [
+        Analysis(
+            timeframe="Días",
+            trend=Trend.BAJISTA,
+            recommendation=Recommendation.VENDER,
+            confidence=60.0,
+            notes=["SMA10<SMA30 (bajista)", "pct_change algo"],
+        )
+    ]
+    text = format_analysis("TTWO", analyses)
+    assert "pct\\_change" in text
+
+
+def test_format_analysis_reports_errors_without_crashing_when_no_data():
+    text = format_analysis("BOGUS", [], errors=["Horas: BOGUS: sin historial disponible"])
+    assert "BOGUS" in text
+    assert "sin historial" in text

@@ -43,3 +43,29 @@ class Quote:
         if not self.prev_close:
             return 0.0
         return (self.price - self.prev_close) / self.prev_close * 100
+
+
+class Trend(str, Enum):
+    ALCISTA = "alcista"
+    BAJISTA = "bajista"
+    LATERAL = "lateral"
+
+
+class Recommendation(str, Enum):
+    COMPRAR = "comprar"
+    VENDER = "vender"
+    MANTENER = "mantener"
+
+
+@dataclass(frozen=True)
+class Analysis:
+    """Resultado del análisis técnico de un ticker para un horizonte dado
+    (ver src/analysis.py). `confidence` es una medida heurística de
+    confluencia entre indicadores (0-100), NO una probabilidad estadística
+    de acierto: ningún indicador técnico predice el mercado con certeza."""
+
+    timeframe: str  # etiqueta legible, ej. "Horas" o "Días"
+    trend: Trend
+    recommendation: Recommendation
+    confidence: float
+    notes: list[str] = field(default_factory=list)

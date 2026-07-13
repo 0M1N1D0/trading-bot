@@ -90,11 +90,30 @@ reiniciar el proceso. Cualquier otro chat que le escriba es ignorado.
 | `/remove_action` (alias `/remove`) | `/remove_action TTWO` | Quita un ticker de la watchlist. Si el ticker viene de `config.yaml`, se quita solo de la sesión actual y reaparecerá al reiniciar (edita `config.yaml` para quitarlo de forma permanente). |
 | `/list_actions` (alias `/list`) | `/list_actions` | Muestra la watchlist completa (config.yaml + agregadas por Telegram) con su intervalo y reglas. |
 | `/status` | `/status AAPL` | Precio actual de un ticker (o de toda la watchlist si no se indica ninguno). |
+| `/analisis` (alias `/analysis`) | `/analisis TTWO` | Análisis técnico del ticker: tendencia, recomendación (comprar/vender/mantener) y confianza, para horas (velas de 1h) y días (velas diarias). Ver "Análisis técnico" más abajo. |
 | `/help` (alias `/start`) | `/help` | Lista los comandos disponibles. |
 
 El mercado (`US`/`MX`) se infiere del ticker: sufijo `.MX` → `MX`, si no →
 `US` (mismo criterio que `config.yaml`). Las acciones agregadas por
 Telegram se guardan en `data/state.db` y sobreviven a un reinicio del bot.
+
+### Análisis técnico (`/analisis`)
+
+`/analisis TICKER` calcula, con el historial de precios de Yahoo Finance,
+una tendencia (alcista/bajista/lateral), una recomendación
+(comprar/vender/mantener) y una confianza (50–85%) para dos horizontes:
+**Horas** (velas de 1h, último mes) y **Días** (velas diarias, últimos 6
+meses). La dirección la deciden 3 indicadores clásicos —cruce de medias
+móviles (SMA), histograma de MACD y momentum— que "votan" alcista/bajista;
+el RSI se usa aparte como señal de cautela (resta confianza cuando hay
+sobrecompra en una racha alcista, o sobreventa en una bajista, en vez de
+invertir la recomendación).
+
+**Esto no es asesoría financiera ni una predicción real del mercado**: es
+un análisis técnico automático basado en indicadores históricos, con una
+confianza heurística que nunca llega a 100% a propósito. El mensaje
+siempre incluye este disclaimer. Úsalo como un dato más, no como una
+señal de compra/venta garantizada.
 
 ## 4. Probar antes de dejarlo corriendo
 
@@ -370,8 +389,9 @@ trading-bot/
 │   ├── main.py             # arranca el bot
 │   ├── config.py           # carga config.yaml + .env
 │   ├── models.py           # tipos: WatchItem, Quote, AlertRule...
-│   ├── provider.py         # obtiene precios (yfinance)
+│   ├── provider.py         # obtiene precios y velas históricas (yfinance)
 │   ├── rules.py            # evalúa umbrales y % de cambio
+│   ├── analysis.py         # análisis técnico: tendencia/recomendación/confianza (puro)
 │   ├── notifier.py         # manda mensajes a Telegram (saliente)
 │   ├── telegram_bot.py     # recibe comandos de Telegram (/add_action...)
 │   ├── commands.py         # parseo/formato de los comandos (puro, testeable)
@@ -381,6 +401,7 @@ trading-bot/
 │   └── scheduler.py        # un job por acción con su propio intervalo
 ├── scripts/
 │   ├── check_quotes.py   # prueba manual de datos de mercado
+│   ├── check_analysis.py # prueba manual del análisis técnico
 │   └── check_telegram.py # prueba manual de envío a Telegram
 ├── tests/                # pruebas unitarias (pytest)
 └── data/                 # bot.log y state.db (se crean solos)
